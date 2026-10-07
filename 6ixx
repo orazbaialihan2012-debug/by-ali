@@ -1,0 +1,88 @@
+-- =====================================================================
+-- ANTI-RAGDOLL / ANTI-STUN INDEPENDIENTE
+-- =====================================================================
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+
+local BAD_STATES = {
+    [Enum.HumanoidStateType.Physics]     = true,
+    [Enum.HumanoidStateType.FallingDown] = true,
+    [Enum.HumanoidStateType.GettingUp]   = true,
+    [Enum.HumanoidStateType.Ragdoll]     = true,
+}
+
+local ragdollEvent
+task.spawn(function()
+    local events = ReplicatedStorage:WaitForChild("Events", 10)
+    if events then 
+        ragdollEvent = events:WaitForChild("RagdollState", 10) 
+    end
+end)
+
+local function disableBadScripts(char)
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("LocalScript") then
+            local n = obj.Name:lower()
+            if n:find("stun") or n:find("fall") or n:find("ragdoll") then
+                pcall(function() obj.Disabled = true end)
+            end
+        end
+    end
+end
+
+local antiRagdollConn, antiRagdollAccum = nil, 0
+
+local function startAntiRagdoll()
+    if antiRagdollConn then antiRagdollConn:Disconnect() end
+    antiRagdollAccum = 0
+    antiRagdollConn = RunService.Heartbeat:Connect(function(dt)
+        antiRagdollAccum += dt
+        if antiRagdollAccum < 0.1 then return end
+        antiRagdollAccum = 0
+
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or not hum.Parent then return end
+
+        if ragdollEvent then 
+            pcall(function() ragdollEvent:FireServer(false) end) 
+        end
+        
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        
+        if BAD_STATES[hum:GetState()] then 
+            hum:ChangeState(Enum.HumanoidStateType.Running) 
+        end
+        
+        if hum.PlatformStand then 
+            hum.PlatformStand = false 
+        end
+    end)
+end
+
+local function onCharacter(c)
+    local hum = c:WaitForChild("Humanoid", 5)
+    if hum then
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+    end
+    disableBadScripts(c)
+end
+
+if LocalPlayer.Character then
+    task.spawn(function() onCharacter(LocalPlayer.Character) end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(c)
+    task.wait(0.5)
+    onCharacter(c)
+    startAntiRagdoll()
+end)
+
+startAntiRagdoll()
+print("[AntiRagdoll] Activado correctamente.")
