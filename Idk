@@ -1,0 +1,455 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LP = Players.LocalPlayer
+
+local spinActive = false
+local followActive = false
+local antiFriendActive = true -- Anti-Friend default ON
+local currentTarget = nil
+local selectedPlayers = {}
+
+local spinAngle = 0
+local SPIN_SPEED = 14
+local moveTimer = 0
+local strafeDirection = 1
+
+local function hasSelectedPlayers()
+	for _, isSelected in pairs(selectedPlayers) do
+		if isSelected then return true end
+	end
+	return false
+end
+
+-- --- АРЕНАДА ЕКЕНІН ТЕКСЕРУ (Шөпті/Grass және сыртты өткізбейді) ---
+local function isInArena(character)
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return false end
+	local root = character.HumanoidRootPart
+	
+	-- 1. Табан астындағы материалды тексеру (Raycast)
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterDescendantsInstances = {character}
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -10, 0), raycastParams)
+	if rayResult then
+		-- Егер табанында ШӨП (Grass) болса, ол аренаның сыртында
+		if rayResult.Material == Enum.Material.Grass then
+			return false
+		end
+	end
+
+	return true
+end
+
+-- --- GUI ҚҰРУ ---
+local gui = Instance.new("ScreenGui")
+gui.Name = "DeltaDualHub"
+gui.Parent = game.CoreGui
+gui.ResetOnSpawn = false
+
+-- 1. FAST SPIN Батырмасы
+local spinBtn = Instance.new("TextButton")
+spinBtn.Size = UDim2.new(0, 160, 0, 40)
+spinBtn.Position = UDim2.new(0, 10, 0, 10)
+spinBtn.Text = "FAST SPIN [Z]: OFF"
+spinBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+spinBtn.TextColor3 = Color3.new(1, 1, 1)
+spinBtn.TextScaled = true
+spinBtn.Parent = gui
+
+local spinCorner = Instance.new("UICorner", spinBtn)
+spinCorner.CornerRadius = UDim.new(0, 8)
+
+-- 2. FOLLOW Батырмасы
+local followBtn = Instance.new("TextButton")
+followBtn.Size = UDim2.new(0, 160, 0, 40)
+followBtn.Position = UDim2.new(0, 10, 0, 55)
+followBtn.Text = "FOLLOW [X]: OFF"
+followBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+followBtn.TextColor3 = Color3.new(1, 1, 1)
+followBtn.TextScaled = true
+followBtn.Parent = gui
+
+local followCorner = Instance.new("UICorner", followBtn)
+followCorner.CornerRadius = UDim.new(0, 8)
+
+-- 3. ANTI-FRIEND Батырмасы
+local antiFriendBtn = Instance.new("TextButton")
+antiFriendBtn.Size = UDim2.new(0, 160, 0, 40)
+antiFriendBtn.Position = UDim2.new(0, 10, 0, 100)
+antiFriendBtn.Text = "ANTI-FRIEND [C]: ON"
+antiFriendBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 50)
+antiFriendBtn.TextColor3 = Color3.new(1, 1, 1)
+antiFriendBtn.TextScaled = true
+antiFriendBtn.Parent = gui
+
+local afCorner = Instance.new("UICorner", antiFriendBtn)
+afCorner.CornerRadius = UDim.new(0, 8)
+
+-- 4. Тізім Батырмасы
+local toggleListBtn = Instance.new("TextButton")
+toggleListBtn.Size = UDim2.new(0, 170, 0, 35)
+toggleListBtn.Position = UDim2.new(1, -180, 0, 10)
+toggleListBtn.Text = "PLAYER LIST [V]: ON"
+toggleListBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+toggleListBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleListBtn.TextScaled = true
+toggleListBtn.Parent = gui
+
+local listBtnCorner = Instance.new("UICorner", toggleListBtn)
+listBtnCorner.CornerRadius = UDim.new(0, 8)
+
+-- 5. Refresh Батырмасы
+local refreshBtn = Instance.new("TextButton")
+refreshBtn.Size = UDim2.new(0, 170, 0, 30)
+refreshBtn.Position = UDim2.new(1, -180, 0, 50)
+refreshBtn.Text = "🔄 REFRESH LIST"
+refreshBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+refreshBtn.TextColor3 = Color3.new(1, 1, 1)
+refreshBtn.TextScaled = true
+refreshBtn.Parent = gui
+
+local refCorner = Instance.new("UICorner", refreshBtn)
+refCorner.CornerRadius = UDim.new(0, 8)
+
+-- 6. ScrollingFrame
+local listFrame = Instance.new("ScrollingFrame")
+listFrame.Size = UDim2.new(0, 170, 0, 260)
+listFrame.Position = UDim2.new(1, -180, 0, 85)
+listFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+listFrame.BackgroundTransparency = 0.2
+listFrame.BorderSizePixel = 0
+listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+listFrame.Parent = gui
+
+local frameCorner = Instance.new("UICorner", listFrame)
+frameCorner.CornerRadius = UDim.new(0, 8)
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 5)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = listFrame
+
+-- --- TOGGLE FUNCTIONS ---
+local function toggleSpin()
+	spinActive = not spinActive
+	if spinActive then
+		followActive = false
+		followBtn.Text = "FOLLOW [X]: OFF"
+		followBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+
+		spinBtn.Text = "FAST SPIN [Z]: ON"
+		spinBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 50)
+	else
+		spinBtn.Text = "FAST SPIN [Z]: OFF"
+		spinBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+		if LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") then
+			LP.Character:FindFirstChildOfClass("Humanoid").AutoRotate = true
+		end
+	end
+end
+
+local function toggleFollow()
+	followActive = not followActive
+	if followActive then
+		spinActive = false
+		spinBtn.Text = "FAST SPIN [Z]: OFF"
+		spinBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+
+		followBtn.Text = "FOLLOW [X]: ON"
+		followBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 50)
+	else
+		followBtn.Text = "FOLLOW [X]: OFF"
+		followBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+		if LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") then
+			LP.Character:FindFirstChildOfClass("Humanoid").AutoRotate = true
+		end
+	end
+end
+
+local function toggleAntiFriend()
+	antiFriendActive = not antiFriendActive
+	if antiFriendActive then
+		antiFriendBtn.Text = "ANTI-FRIEND [C]: ON"
+		antiFriendBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 50)
+	else
+		antiFriendBtn.Text = "ANTI-FRIEND [C]: OFF"
+		antiFriendBtn.BackgroundColor3 = Color3.fromRGB(220, 30, 30)
+	end
+end
+
+local function togglePlayerList()
+	listFrame.Visible = not listFrame.Visible
+	refreshBtn.Visible = listFrame.Visible
+	if listFrame.Visible then
+		toggleListBtn.Text = "PLAYER LIST [V]: ON"
+		toggleListBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	else
+		toggleListBtn.Text = "PLAYER LIST [V]: OFF"
+		toggleListBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	end
+end
+
+-- --- BUTTON CLICKS ---
+spinBtn.MouseButton1Click:Connect(toggleSpin)
+followBtn.MouseButton1Click:Connect(toggleFollow)
+antiFriendBtn.MouseButton1Click:Connect(toggleAntiFriend)
+toggleListBtn.MouseButton1Click:Connect(togglePlayerList)
+
+-- --- PC KEYBOARD LISTENERS ---
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end -- Ignore when typing in chat
+	
+	if input.KeyCode == Enum.KeyCode.Z then
+		toggleSpin()
+	elseif input.KeyCode == Enum.KeyCode.X then
+		toggleFollow()
+	elseif input.KeyCode == Enum.KeyCode.C then
+		toggleAntiFriend()
+	elseif input.KeyCode == Enum.KeyCode.V then
+		togglePlayerList()
+	end
+end)
+
+-- --- ХИТБОКС ФУНКЦИЯСЫ ---
+local function applyHitbox(hrp, enable)
+	if not hrp or not hrp:IsA("BasePart") then return end
+	if enable then
+		hrp.Size = Vector3.new(12, 12, 12)
+		hrp.Transparency = 0.7
+		hrp.Material = Enum.Material.ForceField
+		hrp.Color = Color3.fromRGB(255, 255, 255)
+		hrp.CanCollide = false
+	else
+		if hrp.Size ~= Vector3.new(2, 2, 1) then
+			hrp.Size = Vector3.new(2, 2, 1)
+			hrp.Transparency = 1
+			hrp.Material = Enum.Material.Plastic
+		end
+	end
+end
+
+-- --- ЕҢ ЖАҚЫН ОЙЫНШЫНЫ ТАБУ ---
+local function getClosestGeneral()
+	local char = LP.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+	local root = char.HumanoidRootPart
+
+	local closest = nil
+	local dist = math.huge
+
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			-- Anti-Friend тексерісі
+			local isFriend = false
+			if antiFriendActive then
+				pcall(function()
+					isFriend = LP:IsFriendsWith(p.UserId)
+				end)
+			end
+
+			-- Арена тексерісі
+			if not isFriend and isInArena(p.Character) then
+				local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+				if humanoid and humanoid.Health > 0 then
+					local enemy = p.Character.HumanoidRootPart
+					local d = (root.Position - enemy.Position).Magnitude
+					if d < dist then
+						dist = d
+						closest = enemy
+					end
+				end
+			end
+		end
+	end
+	return closest
+end
+
+local function getClosestSelected()
+	local char = LP.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+	local root = char.HumanoidRootPart
+
+	local closest = nil
+	local dist = math.huge
+
+	for p, isSelected in pairs(selectedPlayers) do
+		if isSelected and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			local isFriend = false
+			if antiFriendActive then
+				pcall(function()
+					isFriend = LP:IsFriendsWith(p.UserId)
+				end)
+			end
+
+			if not isFriend and isInArena(p.Character) then
+				local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+				if humanoid and humanoid.Health > 0 then
+					local enemy = p.Character.HumanoidRootPart
+					local d = (root.Position - enemy.Position).Magnitude
+					if d < dist then
+						dist = d
+						closest = enemy
+					end
+				end
+			end
+		end
+	end
+	return closest
+end
+
+-- --- ТІЗІМДІ ЖАҢАРТУ ---
+local function updatePlayerList()
+	for _, child in pairs(listFrame:GetChildren()) do
+		if child:IsA("TextButton") then child:Destroy() end
+	end
+
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= LP then
+			local pBtn = Instance.new("TextButton")
+			pBtn.Size = UDim2.new(1, -10, 0, 32)
+			pBtn.Text = p.DisplayName or p.Name
+			pBtn.TextScaled = true
+			pBtn.TextColor3 = Color3.new(1, 1, 1)
+			
+			local btnCorner = Instance.new("UICorner", pBtn)
+			btnCorner.CornerRadius = UDim.new(0, 6)
+
+			if selectedPlayers[p] then
+				pBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 50)
+			else
+				pBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+			end
+
+			pBtn.MouseButton1Click:Connect(function()
+				selectedPlayers[p] = not selectedPlayers[p]
+				updatePlayerList()
+			end)
+
+			pBtn.Parent = listFrame
+		end
+	end
+end
+
+refreshBtn.MouseButton1Click:Connect(updatePlayerList)
+
+Players.PlayerAdded:Connect(function(p)
+	task.wait(0.5)
+	updatePlayerList()
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	selectedPlayers[player] = nil
+	updatePlayerList()
+end)
+
+updatePlayerList()
+
+-- --- БҮЛТ КӨРСЕТПЕЙТІН ЖӘНЕ СЕКІРГЕНДЕ ТОҚТАМАЙТЫН НЕГІЗГІ ЦИКЛ ---
+RunService.RenderStepped:Connect(function(deltaTime)
+	local char = LP.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChildOfClass("Humanoid") then return end
+	local root = char.HumanoidRootPart
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+	if humanoid.Health <= 0 then return end
+
+	-- 1. ТАРГЕТ ТАБУ
+	local targetRoot = nil
+	if hasSelectedPlayers() then
+		targetRoot = getClosestSelected()
+	else
+		targetRoot = getClosestGeneral()
+	end
+
+	currentTarget = targetRoot
+
+	-- 2. ХИТБОКС ТҰРАҚТАНДЫРУ
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = p.Character.HumanoidRootPart
+			if (spinActive or followActive) and currentTarget and hrp == currentTarget then
+				applyHitbox(hrp, true)
+			else
+				applyHitbox(hrp, false)
+			end
+		end
+	end
+
+	-- 3. ҚОЗҒАЛЫС ЖӘНЕ АСПАНҒА ҰШЫРМАЙТЫН AIM
+	if (spinActive or followActive) and currentTarget and currentTarget.Parent then
+		local enemyPos = currentTarget.Position
+		local look = Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z)
+
+		humanoid.AutoRotate = false
+		root.CFrame = CFrame.new(root.Position) * CFrame.Angles(
+			0,
+			math.atan2(root.Position.X - look.X, root.Position.Z - look.Z),
+			0
+		)
+
+		-- 1) FAST SPIN РЕЖИМІ
+		if spinActive then
+			humanoid.WalkSpeed = 24
+			local distance = (Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+
+			if distance > 12 then
+				local moveDir = (look - root.Position)
+				if moveDir.Magnitude > 0 then
+					LP:Move(moveDir.Unit, false)
+				end
+			else
+				spinAngle = spinAngle + (deltaTime * SPIN_SPEED)
+				local offset = Vector3.new(math.cos(spinAngle) * 4, 0, math.sin(spinAngle) * 4)
+				local desiredPosition = look + offset
+				local moveDir = (desiredPosition - root.Position)
+				if moveDir.Magnitude > 0 then
+					LP:Move(moveDir.Unit, false)
+				end
+			end
+
+		-- 2) FOLLOW РЕЖИМІ
+		elseif followActive then
+			humanoid.WalkSpeed = 18
+			local distance = (Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+
+			moveTimer = moveTimer + deltaTime
+			if moveTimer > 0.35 then
+				moveTimer = 0
+				local targetLook = currentTarget.CFrame.LookVector
+				local myToTarget = (enemyPos - root.Position)
+				if myToTarget.Magnitude > 0 and targetLook:Dot(myToTarget.Unit) < -0.7 then 
+					strafeDirection = -strafeDirection
+				else
+					if math.random(1, 10) > 5 then
+						strafeDirection = -strafeDirection
+					end
+				end
+			end
+
+			local dirVec = (look - root.Position)
+			local forwardVector = dirVec.Magnitude > 0 and dirVec.Unit or root.CFrame.LookVector
+			local rightVector = Vector3.new(-forwardVector.Z, 0, forwardVector.X)
+			local finalDirection = Vector3.new(0, 0, 0)
+
+			if distance > 13 then
+				finalDirection = forwardVector
+			elseif distance <= 13 and distance > 4 then
+				finalDirection = (forwardVector * 0.7) + (rightVector * strafeDirection * 1.5)
+			else
+				finalDirection = (rightVector * strafeDirection * 1.8)
+			end
+
+			if finalDirection.Magnitude > 0 then
+				LP:Move(finalDirection.Unit, false)
+			end
+		end
+	else
+		if not spinActive and not followActive then
+			humanoid.AutoRotate = true
+		end
+	end
+end)
